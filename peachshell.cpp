@@ -47,17 +47,23 @@ void init_shell(){
 	
 	//get the file info
 	shell_terminal = STDIN_FILENO;
-        
-//    //set process group
-//    shell_pgid = getpid();
-//    setpgid(shell_pgid, shell_pgid);
-//
-//    //grap control of the terminal
-//    tcsetpgrp(shell_terminal, shell_pgid);
-//    
-//    //save default terminal attributes
-//    tcgetattr(shell_terminal, &shell_tmodes);
+    
+    signal (SIGINT, SIG_IGN);
+    signal (SIGQUIT, SIG_IGN);
+    signal (SIGTSTP, SIG_IGN);
+    signal (SIGTTIN, SIG_IGN);
+    signal (SIGTTOU, SIG_IGN);
+    signal (SIGCHLD, SIG_IGN);
+    
+    //set process group
+    shell_pgid = getpid();
+    setpgid(shell_pgid, shell_pgid);
 
+    //grab control of the terminal
+    tcsetpgrp(shell_terminal, shell_pgid);
+    
+    //save default terminal attributes
+    tcgetattr(shell_terminal, &shell_tmodes);
     
     //welcome
     cout<<"Hello, April's shell is running happily!"<<endl;
@@ -89,19 +95,74 @@ void pre_input(){
 void wait_job(Job *j){
     int status;
     while(waitpid(j->pgid,&status,WNOHANG) == 0){   //while there are children waited
+        if(WIFSTOPPED(status)) j->run = 0;
         if(j->run == 0) return;     //exit if the job has been set to stopped
     }
     j->run = -1;    //if job finish, set status to -1
 }
 
 void do_foreground(Job *j, int is_continue){
-
+    tcsetpgrp(shell_terminal, j->pgid);
+    if(is_continue){
+        tcsetattr(shell_terminal, TCSADRAIN, &j->tmodes);
+        //send every process continue signal
+        kill(-j->pgid, SIGCONT);
+    }
     wait_job(j);
+
+    //put the shell back in the foreground
+    //no idea how signal pass through different process group
+    //if don't add ignore SIGTTOU, shell will quit
+    //signal(SIGTTOU, SIG_IGN);
+    tcsetpgrp (shell_terminal, shell_pgid);
     
+    //Restore the shell’s terminal modes.
+   // tcgetattr (shell_terminal, &j->tmodes);
+   // tcsetattr (shell_terminal, TCSADRAIN, &shell_tmodes);
 }
 
 void do_background(Job *j, int is_continue){
     cout<<"["<<j->id<<"]"<<j->pgid<<endl;
+    if(is_continue){
+        kill(-j->pgid, SIGCONT);
+    }
+}
+
+void launch_process(Process *p, pid_t pgid, int infile, int outfile, int errfile, int foreground){
+    pid_t pid;
+    
+    pid = getpid();
+    if(pgid == 0) pgid = pid;
+    
+    //put process into process group
+    setpgid(pid,pgid);
+    if(foreground)
+        tcsetpgrp(shell_terminal, pgid);
+    
+    //set ctrl+c to terminate
+    signal(SIGINT, SIG_DFL);
+    
+    //set ctrl+z to suspend
+    signal(SIGTSTP, SIG_DFL);
+    
+    //set i/o channels of new process
+    if(foreground){
+        if(infile != STDIN_FILENO){
+            dup2(infile, STDIN_FILENO);
+            close(infile);
+        }
+    }
+    if(outfile != STDOUT_FILENO){
+        dup2(outfile, STDOUT_FILENO);
+        close(outfile);
+    }
+    if(errfile !=STDERR_FILENO){
+        dup2(errfile,STDERR_FILENO);
+        close(errfile);
+    }
+    execvp(p->arg[0],p->arg);
+    cout<<"execvp wrong"<<endl;
+    //exit(EXIT_FAILURE);
 }
 
 void launch_job(Job *j){
@@ -141,38 +202,14 @@ void launch_job(Job *j){
         
         //child process
         else if(pid == 0){
+            launch_process(p, j->pgid, infile, outfile, errfile, j->foreground);
             
-            j->pgid = getpid();
-            
-            if(j->foreground){
-                //set ctrl+c to terminate
-                signal(SIGINT, SIG_DFL);
-            
-                //set ctrl+z to suspend
-                signal(SIGTSTP, SIG_DFL);
-            }
-            
-            //set i/o channels of new process
-            if(infile != STDIN_FILENO){
-                dup2(infile, STDIN_FILENO);
-                close(infile);
-            }
-            if(outfile != STDOUT_FILENO){
-                dup2(outfile, STDOUT_FILENO);
-                close(outfile);
-            }
-            if(errfile !=STDERR_FILENO){
-                dup2(errfile,STDERR_FILENO);
-                close(errfile);
-            }
-            execvp(p->arg[0],p->arg);
-            cout<<"execvp wrong"<<endl;
-            //exit(EXIT_FAILURE);
-            return;
         }
-            //parent process, wait until finished
+        //parent process, wait until finished
         else{
-            wait(NULL);
+            p->pid = pid;
+            if(j->pgid == 0) j->pgid = pid;
+            setpgid(pid, j->pgid);
         }
         
         //close file descriptors if it is not job's std i/o
@@ -186,8 +223,6 @@ void launch_job(Job *j){
         //set infile with pipe
         infile = ppipe[0];
     }
-    
-    cout<<"HAHA"<<endl;
     
     if(j->foreground)
         do_foreground(j,0);
@@ -203,6 +238,7 @@ void list_jobs(){
             cout<<"["<<j->id<<"]   ";
             if(j->run == 0) cout<<"Stopped                 ";
             else cout<<"Running                 ";
+            
             cout<<j->name;
             //if job is background, print &
             if(j->foreground!=1) cout<<" &";
@@ -211,12 +247,113 @@ void list_jobs(){
     }
 }
 
-void bg_jobs(char *saveptr){
+int get_number(char *saveptr){
+    int i;
+    int j;
+    int sum;
+    sum = 0;
+    j = 1;
+    if(saveptr == NULL) return -1;
+    for(i = (int)strlen(saveptr);i>1; i--){
+        int na = saveptr[i-1]-'0';
+        if((na>=0)&&(na<=9)) sum += na*j;
+        else{
+            return -1;
+        }
+        j*=10;
+    }
+    return sum;
+}
 
+void bg_jobs(char *saveptr){
+    int j_num;
+    j_num = get_number(saveptr);
+    if(j_num == -1){
+        cout<<"Input wrong"<<endl;
+        return;
+    }
+    else{
+        Job *j;
+        int flag = 0;
+        for(j=first_job;j;j=j->next){
+            if(j->id==j_num){
+                flag = 1;
+                if(j->run==-1){
+                    cout<<"job "<<j_num<<" is terminated"<<endl;
+                }
+                else if(j->foreground == 0){
+                    cout<<"job "<<j_num<<" is already in background"<<endl;
+                }
+                else{
+                    j->foreground =0;
+                    cout<<"["<<j->id<<"] "<<j->name<<" &"<<endl;
+                }
+            }
+        }
+        
+        if(flag == 0){
+            cout<<"no such job"<<endl;
+        }
+    }
 }
 
 void fg_jobs(char *saveptr){
+    int j_num;
+    j_num = get_number(saveptr);
+    if(j_num == -1){
+        cout<<"Input wrong"<<endl;
+        return;
+    }
+    else{
+        Job *j;
+        int flag = 0;
+        for(j=first_job;j;j=j->next){
+            if(j->id==j_num){
+                flag = 1;
+                if(j->run==-1){
+                    cout<<"job "<<j_num<<" is terminated"<<endl;
+                }
+                else if(j->foreground == 1){
+                    cout<<"job "<<j_num<<" is already in foreground"<<endl;
+                }
+                else{
+                    j->foreground =1;
+                    do_foreground(j, 1);
+                }
+            }
+        }
+        if(flag == 0){
+            cout<<"no such job"<<endl;
+        }
+    }
+}
 
+void kill_jobs(char* saveptr){
+    int j_num;
+    j_num = get_number(saveptr);
+    if(j_num == -1){
+        cout<<"Input wrong"<<endl;
+        return;
+    }
+    else{
+        Job *j;
+        int flag = 0;
+        for(j=first_job;j;j=j->next){
+            if(j->id==j_num){
+                flag = 1;
+                if(j->run==-1){
+                    cout<<"job "<<j_num<<" is already terminated"<<endl;
+                }
+                else{
+                    j->run = -1;
+                    kill(j->pgid,0);
+                }
+            }
+        }
+        if(flag == 0){
+            cout<<"no such job"<<endl;
+        }
+    }
 }
 
 void change_directory(char* saveptr){
@@ -231,10 +368,6 @@ void change_directory(char* saveptr){
     //ret!=0 means no such file or directory
     if(ret != 0)
         cout<<"April's shell: cd: "<<str2<<": No such file or directory"<<endl;
-
-}
-
-void kill_jobs(char* saveptr){
 
 }
 
@@ -295,10 +428,11 @@ void create_job(string raw){
         }
     }
     
+    j->name = j->first_process->arg[0];
+    
     //link job chain
     if(first_job == NULL){
         j->id = 1;
-        j->name = j->first_process->arg[0];
         first_job = j;
         current_job = j;
     }
@@ -311,6 +445,12 @@ void create_job(string raw){
 }
 
 void dispatch(string raw){
+    
+    //================================================
+    //if it is enter
+    //================================================
+    if(raw=="") return;
+    
     
     //convert string to c string
     char *input = new char[raw.length()+1];
@@ -385,6 +525,19 @@ void dispatch(string raw){
 
 }
 
+void job_update(){
+    Job *j;
+    for(j = first_job;j;j=j->next){
+        int status;
+        //if a new job is done
+        if((j->run ==1) && (waitpid(j->pgid, &status, WNOHANG)!=0))
+        {
+            j->run = -1;
+            cout<<"["<<j->id<<"]   Done       "<<j->name<<endl;
+        }
+    }
+}
+
 int main(){
     
 	//init the shell
@@ -392,10 +545,6 @@ int main(){
 	
 	//run the shell
 	while(1){
-        
-        //ignore ctrl+c and ctrl+z
-        signal(SIGINT, SIG_IGN);
-        signal(SIGTSTP, SIG_IGN);
         
         //get input
         pre_input();
@@ -407,6 +556,9 @@ int main(){
             dispatch(raw_input);
         }
         else exit_shell();
+        
+        //check whether job in background is done
+        job_update();
 	}
 	return 0;
 }
