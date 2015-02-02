@@ -1,9 +1,9 @@
 CC = g++
 CFLAGS = -c -Wall
 LDFLAGS =
-SOURCES = assignment1.cpp
+SOURCES = peachshell.cpp
 OBJECTS = $(SOURCES:.cpp = .o)
-EXECUTABLE = proc_parse
+EXECUTABLE = myshell
 
 all: $(SOURCES) $(EXECUTABLE)
 
@@ -13,6 +13,6 @@ $(EXECUTABLE):$(OBJECTS)
 	$(CC) $(CFLAGS) $< -o $@
 
 clean:
-	rm -f proc_parse assignment1.o
-run: proc_parse
-	./proc_parse
+	rm -f myshell peachshell.o
+run: myshell
+	./myshell

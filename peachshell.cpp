@@ -14,9 +14,8 @@
 using namespace std;
 
 pid_t shell_pgid;
-struct termios shell_tmodes;
 int shell_terminal;
-int shell_active;
+struct termios shell_tmodes;
 
 typedef struct Process{
 	struct Process *next;	//next process
@@ -29,10 +28,11 @@ typedef struct Job{
     struct Job *next;
     pid_t pgid;
     Process *first_process;
+    struct termios tmodes;  //saved terminal modes
     char *name;
     int id;
     int stdin, stdout, stderr;
-    int stop;     //0 if job is stopped, 1 if job is running,-1 if job is killed
+    int run;     //0 if job is stopped, 1 if job is running,-1 if job is killed
     int foreground; //0 if job is background, 1 if job is foreground
 }Job;
 
@@ -43,33 +43,24 @@ Job * first_job = NULL;
 //init current_job
 Job * current_job = NULL;
 
-
-void sig_handler(int signo){
-}
-
 void init_shell(){
 	
 	//get the file info
 	shell_terminal = STDIN_FILENO;
-	
-	//whether shell_terminal refers to the terminal
-	shell_active = isatty(shell_terminal);
-
-	if(shell_active){
-		
-		//set process group
-		shell_pgid = getpid();
-		setpgid(shell_pgid, shell_pgid);
-
-		//grap control of the terminal
-		tcsetpgrp(shell_terminal, shell_pgid);
-
-		//save default terminal attributes for shell
-		tcgetattr(shell_terminal, &shell_tmodes);
         
-        //welcome
-        cout<<"Hello, April's shell is running happily!"<<endl;
-	}
+//    //set process group
+//    shell_pgid = getpid();
+//    setpgid(shell_pgid, shell_pgid);
+//
+//    //grap control of the terminal
+//    tcsetpgrp(shell_terminal, shell_pgid);
+//    
+//    //save default terminal attributes
+//    tcgetattr(shell_terminal, &shell_tmodes);
+
+    
+    //welcome
+    cout<<"Hello, April's shell is running happily!"<<endl;
     
 }
 
@@ -78,7 +69,7 @@ void exit_shell(){
 	exit(EXIT_SUCCESS);
 }
 
-void get_input(){
+void pre_input(){
     //current directory
     char current_direct[1024];
     //current user
@@ -95,16 +86,22 @@ void get_input(){
     
 }
 
-
-void do_foreground(Job *job, int is_continue){
-
+void wait_job(Job *j){
+    int status;
+    while(waitpid(j->pgid,&status,WNOHANG) == 0){   //while there are children waited
+        if(j->run == 0) return;     //exit if the job has been set to stopped
+    }
+    j->run = -1;    //if job finish, set status to -1
 }
 
-void do_background(Job *job, int is_continue){
+void do_foreground(Job *j, int is_continue){
+
+    wait_job(j);
     
 }
 
-void wait_job(Job *job){
+void do_background(Job *j, int is_continue){
+    cout<<"["<<j->id<<"]"<<j->pgid<<endl;
 }
 
 void launch_job(Job *j){
@@ -118,7 +115,6 @@ void launch_job(Job *j){
     
     //do every process in a job
     for(p=j->first_process;p;p=p->next){
-        
         //set pipes
         if(p->next){
             //handle error
@@ -146,29 +142,14 @@ void launch_job(Job *j){
         //child process
         else if(pid == 0){
             
-            //if shell is active, set the terminal to job, set the signal default value
-            if(shell_active){
-                pid_t get_pid;
-                
-                //get process id
-                get_pid = getpid();
-                
-                //job id is the first process id
-                if(j->pgid == 0) j->pgid = get_pid;
-                
-                //tell system this process is in this job
-                setpgid(get_pid, j->pgid);
-                
-                //if foreground, set the terminal to the job
-                if(j->foreground)
-                    tcsetpgrp(shell_terminal,j->pgid);
-                
+            j->pgid = getpid();
+            
+            if(j->foreground){
                 //set ctrl+c to terminate
                 signal(SIGINT, SIG_DFL);
-                
+            
                 //set ctrl+z to suspend
                 signal(SIGTSTP, SIG_DFL);
-                
             }
             
             //set i/o channels of new process
@@ -206,10 +187,9 @@ void launch_job(Job *j){
         infile = ppipe[0];
     }
     
-    //wait for job
-    if(!shell_active)
-        wait_job(j);
-    else if(j->foreground)
+    cout<<"HAHA"<<endl;
+    
+    if(j->foreground)
         do_foreground(j,0);
     else
         do_background(j,0);
@@ -219,9 +199,9 @@ void list_jobs(){
     Job *j;
     for(j=first_job;j;j=j->next){
         //if job is not killed, print job
-        if(j->stop!=-1){
+        if(j->run!=-1){
             cout<<"["<<j->id<<"]   ";
-            if(j->stop == 1) cout<<"Stopped                 ";
+            if(j->run == 0) cout<<"Stopped                 ";
             else cout<<"Running                 ";
             cout<<j->name;
             //if job is background, print &
@@ -272,8 +252,11 @@ void create_job(string raw){
     //create a job
     Job *j = new Job;
     j->next = NULL;
-    j->first_process = first_process;
     j->foreground = 1;
+    j->run = 1;
+    j->stdin = STDIN_FILENO;
+    j->stdout = STDOUT_FILENO;
+    j->stderr = STDERR_FILENO;
     
     //parsing the string by |
     char *str1,*token,*subtoken,*saveptr;
@@ -281,10 +264,6 @@ void create_job(string raw){
     for(str1 = input; ; str1 = NULL){
         token = strtok_r(str1, line, &saveptr);
         if(token==NULL) break;
-        if(strcmp(token,"&")==0){
-             j->foreground=0;
-            break;
-        }
         
         
         //create process
@@ -296,6 +275,10 @@ void create_job(string raw){
         for(str2 = token;;str2=NULL){
             subtoken = strtok_r(str2, space, &saveptr2);
             if(subtoken == NULL) break;
+            if(strcmp(subtoken,"&")==0){
+                j->foreground=0;
+                break;
+            }
             p->arg[i] = subtoken;
             i++;
         }
@@ -304,6 +287,7 @@ void create_job(string raw){
         if(first_process == NULL){
             first_process = p;
             current_process = p;
+            j->first_process = first_process;
         }
         else{
             current_process->next = p;
@@ -395,7 +379,6 @@ void dispatch(string raw){
     //=================================================
     //otherwise, create a new job
     //=================================================
-    
     create_job(raw);
     launch_job(current_job);
     return;
@@ -410,8 +393,12 @@ int main(){
 	//run the shell
 	while(1){
         
+        //ignore ctrl+c and ctrl+z
+        signal(SIGINT, SIG_IGN);
+        signal(SIGTSTP, SIG_IGN);
+        
         //get input
-        get_input();
+        pre_input();
         string raw_input = "";
         getline(cin,raw_input);
 		
