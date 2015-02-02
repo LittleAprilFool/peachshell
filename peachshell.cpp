@@ -94,11 +94,21 @@ void pre_input(){
 
 void wait_job(Job *j){
     int status;
-    while(waitpid(j->pgid,&status,WNOHANG) == 0){   //while there are children waited
-        if(WIFSTOPPED(status)) j->run = 0;
-        if(j->run == 0) return;     //exit if the job has been set to stopped
-    }
+    int pid;
+    status = 0;
+    do{
+        pid = waitpid(j->pgid,&status,WUNTRACED|WNOHANG);
+        if(WIFSTOPPED(status)){
+            j->run = 0;
+            cout<<endl;
+            cout<<"["<<j->id<<"]   Stopped        "<<j->name<<endl;
+            return;
+        }
+     }
+    while(pid == 0);   //while there are children waited
+
     j->run = -1;    //if job finish, set status to -1
+    cout<<endl;
 }
 
 void do_foreground(Job *j, int is_continue){
@@ -113,18 +123,20 @@ void do_foreground(Job *j, int is_continue){
     //put the shell back in the foreground
     //no idea how signal pass through different process group
     //if don't add ignore SIGTTOU, shell will quit
-    //signal(SIGTTOU, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
     tcsetpgrp (shell_terminal, shell_pgid);
     
     //Restore the shell’s terminal modes.
-   // tcgetattr (shell_terminal, &j->tmodes);
-   // tcsetattr (shell_terminal, TCSADRAIN, &shell_tmodes);
+    tcgetattr (shell_terminal, &j->tmodes);
+    tcsetattr (shell_terminal, TCSADRAIN, &shell_tmodes);
 }
 
 void do_background(Job *j, int is_continue){
-    cout<<"["<<j->id<<"]"<<j->pgid<<endl;
     if(is_continue){
         kill(-j->pgid, SIGCONT);
+    }
+    else{
+        cout<<"["<<j->id<<"]"<<j->pgid<<endl;
     }
 }
 
@@ -287,6 +299,8 @@ void bg_jobs(char *saveptr){
                 else{
                     j->foreground =0;
                     cout<<"["<<j->id<<"] "<<j->name<<" &"<<endl;
+                    j->run = 1;
+                    do_background(j, 1);
                 }
             }
         }
@@ -313,11 +327,10 @@ void fg_jobs(char *saveptr){
                 if(j->run==-1){
                     cout<<"job "<<j_num<<" is terminated"<<endl;
                 }
-                else if(j->foreground == 1){
-                    cout<<"job "<<j_num<<" is already in foreground"<<endl;
-                }
                 else{
+                    j->run = 1;
                     j->foreground =1;
+                    cout<<j->name<<endl;
                     do_foreground(j, 1);
                 }
             }
@@ -345,8 +358,14 @@ void kill_jobs(char* saveptr){
                     cout<<"job "<<j_num<<" is already terminated"<<endl;
                 }
                 else{
-                    j->run = -1;
-                    kill(j->pgid,0);
+                    cout<<"["<<j->id<<"]   ";
+                    if(j->run == 0) cout<<"Stopped                 ";
+                    else cout<<"Running                 ";
+                    
+                    cout<<j->name;
+                    //if job is background, print &
+                    if(j->foreground!=1) cout<<" &";
+                    cout<<endl;
                 }
             }
         }
