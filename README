@@ -1,0 +1,21 @@
+Building a shell
+====
+April Wang
+301269025
+ayw7@sfu.ca
+
+
+Features:
+1) "exit" and ctrl+D to quit the shell
+2) "cd"+directory to change a directory, "cd ~" to change to home
+3) "jobs" to list current jobs
+4) "kill %i" to kill the no.i job
+5) "bg %i" to put the no.i job running background
+6) "fg %i" to put the no.i job running foreground
+7) foreground & background execution
+8) support pipes
+9) ctrl+z to stop a job, ctrl+c to quit a job
+
+
+Reference:
+http://www.gnu.org/software/libc/manual/html_node/Implementing-a-Shell.html#Implementing-a-Shell
