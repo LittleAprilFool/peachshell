@@ -1,8 +1,6 @@
 #include<sys/types.h>
 #include<sys/wait.h>
 #include<termios.h>
-#include<iostream>
-#include<cstdio>
 #include<unistd.h>
 #include<string.h>
 #include<stdlib.h>
@@ -10,8 +8,6 @@
 
 #define space " 	"
 #define line "|"
-
-using namespace std;
 
 pid_t shell_pgid;
 int shell_terminal;
@@ -66,12 +62,12 @@ void init_shell(){
     tcgetattr(shell_terminal, &shell_tmodes);
     
     //welcome
-    cout<<"Hello, April's shell is running happily!"<<endl;
+    printf("Hello, April's shell is running happily!\n");
     
 }
 
 void exit_shell(){
-	cout<<"April's shell is closing now. See ya!"<<endl;
+	printf("April's shell is closing now. See ya!\n");
 	exit(EXIT_SUCCESS);
 }
 
@@ -88,7 +84,7 @@ void pre_input(){
     getlogin_r(current_user,sizeof(current_user));
     
     //input format:username:current_directory$ input
-    cout<<current_user<<": "<<current_direct<<"$ ";
+    printf("%s: %s$ ", current_user, current_direct);
     
 }
 
@@ -100,15 +96,15 @@ void wait_job(Job *j){
         pid = waitpid(j->pgid,&status,WUNTRACED|WNOHANG);
         if(WIFSTOPPED(status)){
             j->run = 0;
-            cout<<endl;
-            cout<<"["<<j->id<<"]   Stopped        "<<j->name<<endl;
+            printf("\n");    
+            printf("[%d]   Stopped	%s\n", j->id, j->name);
             return;
         }
      }
     while(pid == 0);   //while there are children waited
 
     j->run = -1;    //if job finish, set status to -1
-    cout<<endl;
+    printf("\n");    
 }
 
 void do_foreground(Job *j, int is_continue){
@@ -136,7 +132,7 @@ void do_background(Job *j, int is_continue){
         kill(-j->pgid, SIGCONT);
     }
     else{
-        cout<<"["<<j->id<<"]"<<j->pgid<<endl;
+	printf("[%d]%d\n", j->id, j->pgid);
     }
 }
 
@@ -173,7 +169,7 @@ void launch_process(Process *p, pid_t pgid, int infile, int outfile, int errfile
         close(errfile);
     }
     execvp(p->arg[0],p->arg);
-    cout<<"execvp wrong"<<endl;
+    printf("execvp wrong\n");
     //exit(EXIT_FAILURE);
 }
 
@@ -192,7 +188,7 @@ void launch_job(Job *j){
         if(p->next){
             //handle error
             if(pipe(ppipe)<0){
-                cout<<"create pipe wrong"<<endl;
+		printf("create pipe wrong\n");
                 //exit(EXIT_FAILURE);
                 return;
             }
@@ -207,7 +203,7 @@ void launch_job(Job *j){
         
         //if error occurred
         if(pid < 0){
-            cout<<"Fork Failed"<<endl;
+	    printf("Fork Failed\n");
             //exit(EXIT_FAILURE);
             return;
         }
@@ -247,14 +243,14 @@ void list_jobs(){
     for(j=first_job;j;j=j->next){
         //if job is not killed, print job
         if(j->run!=-1){
-            cout<<"["<<j->id<<"]   ";
-            if(j->run == 0) cout<<"Stopped                 ";
-            else cout<<"Running                 ";
+	    printf("[%d] ", j->id);
+            if(j->run == 0) printf("Stopped                 ");
+            else printf("Running                 ");
             
-            cout<<j->name;
+	    printf("%s", j->name);
             //if job is background, print &
-            if(j->foreground!=1) cout<<" &";
-            cout<<endl;
+            if(j->foreground!=1) printf(" &");
+	    printf("\n");            
         }
     }
 }
@@ -281,7 +277,7 @@ void bg_jobs(char *saveptr){
     int j_num;
     j_num = get_number(saveptr);
     if(j_num == -1){
-        cout<<"Input wrong"<<endl;
+        printf("Input wrong\n");
         return;
     }
     else{
@@ -291,14 +287,14 @@ void bg_jobs(char *saveptr){
             if(j->id==j_num){
                 flag = 1;
                 if(j->run==-1){
-                    cout<<"job "<<j_num<<" is terminated"<<endl;
+		    printf("job %d is terminated\n", j_num);
                 }
                 else if(j->foreground == 0){
-                    cout<<"job "<<j_num<<" is already in background"<<endl;
+		    printf("job %d is already in background\n", j_num);
                 }
                 else{
                     j->foreground =0;
-                    cout<<"["<<j->id<<"] "<<j->name<<" &"<<endl;
+		    printf("[%d] %s &\n", j->id, j->name);
                     j->run = 1;
                     do_background(j, 1);
                 }
@@ -306,7 +302,7 @@ void bg_jobs(char *saveptr){
         }
         
         if(flag == 0){
-            cout<<"no such job"<<endl;
+	    printf("no such job\n");
         }
     }
 }
@@ -315,7 +311,7 @@ void fg_jobs(char *saveptr){
     int j_num;
     j_num = get_number(saveptr);
     if(j_num == -1){
-        cout<<"Input wrong"<<endl;
+	printf("Input wrong\n");
         return;
     }
     else{
@@ -325,7 +321,7 @@ void fg_jobs(char *saveptr){
             if(j->id==j_num){
                 flag = 1;
                 if(j->run==-1){
-                    cout<<"job "<<j_num<<" is terminated"<<endl;
+		    printf("job %d is terminated\n", j_num);
                 }
                 else{
                     j->run = 1;
@@ -336,7 +332,7 @@ void fg_jobs(char *saveptr){
             }
         }
         if(flag == 0){
-            cout<<"no such job"<<endl;
+	    printf("no such job\n");
         }
     }
 }
@@ -345,7 +341,7 @@ void kill_jobs(char* saveptr){
     int j_num;
     j_num = get_number(saveptr);
     if(j_num == -1){
-        cout<<"Input wrong"<<endl;
+	printf("Input wrong\n");
         return;
     }
     else{
@@ -355,22 +351,22 @@ void kill_jobs(char* saveptr){
             if(j->id==j_num){
                 flag = 1;
                 if(j->run==-1){
-                    cout<<"job "<<j_num<<" is already terminated"<<endl;
+		    printf("job %d is already terminated\n", j_num);
                 }
                 else{
-                    cout<<"["<<j->id<<"]   ";
-                    if(j->run == 0) cout<<"Stopped                 ";
-                    else cout<<"Running                 ";
+		    printf("[%d]   ", j->id);
+                    if(j->run == 0) printf("Stopped                 ");
+                    else printf("Running                 ");
                     
-                    cout<<j->name;
+                    printf("%s", j->name);
                     //if job is background, print &
-                    if(j->foreground!=1) cout<<" &";
-                    cout<<endl;
-                }
+                    if(j->foreground!=1) printf(" &");
+                    printf("\n");
+		}
             }
         }
         if(flag == 0){
-            cout<<"no such job"<<endl;
+	    printf("no such job\n");
         }
     }
 }
@@ -386,8 +382,7 @@ void change_directory(char* saveptr){
     int ret = chdir(str2);
     //ret!=0 means no such file or directory
     if(ret != 0)
-        cout<<"April's shell: cd: "<<str2<<": No such file or directory"<<endl;
-
+	printf("April's shell: cd: %s: No such file or directory\n", str2);
 }
 
 
@@ -552,7 +547,7 @@ void job_update(){
         if((j->run ==1) && (waitpid(j->pgid, &status, WNOHANG)!=0))
         {
             j->run = -1;
-            cout<<"["<<j->id<<"]   Done       "<<j->name<<endl;
+	    printf("[%d]  Done     %s\n", j->id, j->name);
         }
     }
 }
